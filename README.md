@@ -36,8 +36,8 @@ python regcheck.py car.step --cg 2300,0,420 --out report.md --json report.json
 |---|---|
 | `--cg x,y,z` | 만재 무게중심 (모델 좌표, mm). 넣으면 SSF를 판정합니다 |
 | `--up z` / `--forward -x` | 위쪽 축, 앞쪽 축. 기본값은 자동 (가장 짧은 축 = 높이, 가장 긴 축 = 길이) |
-| `--wheel-name REGEX` | 바퀴 부품 이름 패턴. 기본값 `wheel|tire|tyre|rim|휠|타이어|바퀴` + 모양 인식 |
-| `--solar-name REGEX` | 태양광 셀 부품 이름 패턴. 기본값 `solar|cell|pv|array|셀|태양` |
+| `--wheel-name REGEX` | 바퀴 부품 이름 패턴. 기본값 `wheel\|tire\|tyre\|rim\|휠\|타이어\|바퀴` + 모양 인식 |
+| `--solar-name REGEX` | 태양광 셀 부품 이름 패턴. 기본값 `solar\|cell\|pv\|array\|셀\|태양` |
 | `--contacts "x,y;x,y;x,y"` | 바퀴가 없는 바디 STEP일 때 타이어 접지점을 직접 입력 (`--ground`와 함께) |
 | `--mesh-tol`, `--sample` | 메쉬 정밀도, 지상고 검사 점 간격 (mm) |
 
