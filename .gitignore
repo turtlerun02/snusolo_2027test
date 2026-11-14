@@ -4,3 +4,5 @@
 __pycache__/
 report*.md
 report*.json
+report*.png
+.pytest_cache/

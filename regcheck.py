@@ -9,6 +9,7 @@ and checks the geometric rules that can be measured from CAD:
   2.3.2  front overhang < 60 % of wheelbase
   2.3.3  rear overhang  < 60 % of wheelbase
   2.3.4  road apex 1:15 up / 1:15 down, nothing but tyres touches
+  2.3.5  speed hump 75 mm high (150 + 150 + 150 mm), nothing but tyres touches
   2.3.6  approach and departure angles >= 10 deg
   2.4.2  solar collector area <= 6 m2 (Challenger), from parts named like solar/cell/PV
   2.19.4 static stability factor SSF > 1 (needs the laden centre of mass, --cg)
@@ -315,6 +316,111 @@ def ssf(contacts, cg_xy, cg_h):
     return (best / cg_h if cg_h else None), best
 
 
+def hump_profile(x, lim):
+    """Height of the 2.3.5 speed hump at distance x from its start (worst case: longest top)."""
+    a, top, h = lim["hump_ramp_mm"], lim["hump_top_max_mm"], lim["hump_height_mm"]
+    x = np.asarray(x, dtype=float)
+    return np.clip(np.minimum(x, a + top + a - x) / a, 0.0, 1.0) * h
+
+
+def hump_clearance(body, ground, xr, xf, r_rear, r_front, lim, step=10.0):
+    """Drive the car over the speed hump in side view and return the smallest gap.
+
+    Wheels are circles rolling over the hump; the body pitches about the two axles.
+    Returns (min margin mm, body x of that point, hump start x)."""
+    total = 2 * lim["hump_ramp_mm"] + lim["hump_top_max_mm"]
+    wb = xf - xr
+    # lower envelope of the body in 10 mm slices along the car
+    idx = np.floor((body[:, 0] - body[:, 0].min()) / step).astype(int)
+    zb = np.full(idx.max() + 1, np.inf)
+    np.minimum.at(zb, idx, body[:, 2] - ground)
+    ok = np.isfinite(zb)
+    xb = (body[:, 0].min() + (np.arange(len(zb)) + 0.5) * step)[ok]
+    zb = zb[ok]
+    starts = np.arange(body[:, 0].min() - total - 700, body[:, 0].max() + 700, step)
+
+    def lift(xw, r):
+        if not np.isfinite(r) or r <= 0:  # contact points only: follow the hump surface
+            return hump_profile(xw - starts, lim)
+        u = np.linspace(-r, r, 81)
+        z = hump_profile(xw + u[None, :] - starts[:, None], lim) + np.sqrt(np.clip(r * r - u * u, 0, None))[None, :]
+        return np.clip(z.max(axis=1) - r, 0, None)
+
+    dr, df = lift(xr, r_rear), lift(xf, r_front)
+    raise_ = dr[:, None] + (df - dr)[:, None] * (xb[None, :] - xr) / wb
+    margin = zb[None, :] + raise_ - hump_profile(xb[None, :] - starts[:, None], lim)
+    i, j = np.unravel_index(np.argmin(margin), margin.shape)
+    return float(margin[i, j]), float(xb[j]), float(starts[i])
+
+
+def save_plot(path, res, body, wheels, ground, lim, cg=None):
+    """Side and top view with the envelope, clearance lines and support polygon."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle, Polygon as MplPolygon, Rectangle
+
+    pts = body[:: max(1, len(body) // 60000)]
+    x0, x1 = body[:, 0].min(), body[:, 0].max()
+    for w in wheels:
+        r = w.d / 2 if np.isfinite(w.d) else 0.0
+        x0, x1 = min(x0, w.x - r), max(x1, w.x + r)
+    fig, (ax, bx) = plt.subplots(2, 1, figsize=(13, 9), gridspec_kw={"height_ratios": [1, 1.25]})
+    ax.scatter(pts[:, 0], pts[:, 2] - ground, s=0.3, c="#7a7a7a", linewidths=0)
+    for w in wheels:
+        if np.isfinite(w.d):
+            ax.add_patch(Circle((w.x, w.d / 2), w.d / 2, fill=False, ec="#1f3864", lw=1.2))
+    ax.axhline(0, c="k", lw=1)
+    cx = (x0 + x1) / 2
+    ax.add_patch(Rectangle((cx - lim["length_mm"] / 2, 0), lim["length_mm"], lim["height_mm"], fill=False, ec="#c00000", ls="--", lw=1,
+                           label=f"2.2.1 envelope {lim['length_mm']} x {lim['height_mm']} mm"))
+    if len(wheels) >= 2:
+        xs = [w.x for w in wheels]
+        xf, xr = max(xs), min(xs)
+        wb = xf - xr
+        reach = 0.7 * wb
+        ax.plot([xf, xf + reach], [0, reach * math.tan(math.radians(lim["approach_deg"]))], c="#2e75b6", lw=1,
+                label=f"2.3.6 approach / departure {lim['approach_deg']} deg")
+        ax.plot([xr, xr - reach], [0, reach * math.tan(math.radians(lim["departure_deg"]))], c="#2e75b6", lw=1)
+        b = np.linspace(0, wb, 100)
+        ax.plot(xr + b, 2 * b * (wb - b) / (lim["apex_grade"] * wb), c="#ed7d31", lw=1.2, label=f"2.3.4 road apex 1:{lim['apex_grade']:.0f}")
+        if res.get("hump"):
+            s = res["hump"]["start"]
+            a, top = lim["hump_ramp_mm"], lim["hump_top_max_mm"]
+            ax.fill([s, s + a, s + a + top, s + 2 * a + top], [0, lim["hump_height_mm"], lim["hump_height_mm"], 0],
+                    c="#70ad47", alpha=0.7, label="2.3.5 speed hump (tightest position)")
+    ax.set_aspect("equal")
+    ax.set_ylim(-80, lim["height_mm"] + 150)
+    ax.set_title(f"Side view - {Path(res['file']).name}")
+    ax.set_xlabel("length (mm)")
+    ax.set_ylabel("height above ground (mm)")
+    ax.legend(loc="upper right", fontsize=8)
+
+    bx.scatter(pts[:, 0], pts[:, 1], s=0.3, c="#7a7a7a", linewidths=0)
+    cy = (body[:, 1].min() + body[:, 1].max()) / 2
+    bx.add_patch(Rectangle((cx - lim["length_mm"] / 2, cy - lim["width_mm"] / 2), lim["length_mm"], lim["width_mm"], fill=False, ec="#c00000",
+                           ls="--", lw=1, label=f"2.2.1 envelope {lim['length_mm']} x {lim['width_mm']} mm"))
+    if wheels:
+        c = [(w.x, w.y) for w in wheels]
+        hull = convex_hull_2d(c)
+        if len(hull) >= 3:
+            bx.add_patch(MplPolygon(hull, closed=True, fill=True, fc="#1f3864", alpha=0.12, ec="#1f3864", lw=1.2,
+                                    label="tyre contact polygon (2.19.4 SSF)"))
+        bx.scatter([q[0] for q in c], [q[1] for q in c], c="#1f3864", s=30, zorder=3)
+    if cg is not None:
+        bx.scatter([cg[0]], [cg[1]], marker="x", c="#c00000", s=70, zorder=4, label=f"centre of mass (h = {cg[2] - ground:.0f} mm)")
+    bx.set_aspect("equal")
+    bx.set_title("Top view")
+    bx.set_xlabel("length (mm)")
+    bx.set_ylabel("width (mm)")
+    bx.legend(loc="upper right", fontsize=8)
+    n = {k: sum(1 for c_ in res["checks"] if c_["result"] == k) for k in ("PASS", "FAIL", "CHECK")}
+    fig.suptitle(f"BWSC 2027 regulation check: {n['PASS']} pass, {n['FAIL']} fail, {n['CHECK']} manual", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+
+
 def run(path: Path, args) -> dict:
     rules = json.loads(RULES_FILE.read_text(encoding="utf-8"))
     lim = rules["limits"]
@@ -389,6 +495,14 @@ def run(path: Path, args) -> dict:
                 f"{margin[i]:.0f} mm (뒷바퀴에서 {b[i]:.0f} mm 지점, 지상고 {mid[i, 2] - ground:.0f} mm)", margin[i] > 0,
                 f"휠베이스 중앙에서 필요한 지상고 {wb * m / 2:.0f} mm")
 
+        rad = lambda x_: max([w.d for w in wheels if abs(w.x - x_) < 60 and np.isfinite(w.d)] or [float("nan")]) / 2
+        if len(body):
+            hm, hx_, hs = hump_clearance(body, ground, xr, xf, rad(xr), rad(xf), lim)
+            res["hump"] = {"margin": hm, "x": hx_, "start": hs}
+            add("2.3.5", f"과속방지턱 통과 (높이 {lim['hump_height_mm']} mm, 최소 여유)", "> 0 mm",
+                f"{hm:.0f} mm (뒷바퀴에서 {hx_ - xr:.0f} mm 지점)", hm > 0,
+                f"경사 {lim['hump_ramp_mm']} + 윗면 {lim['hump_top_max_mm']} + 경사 {lim['hump_ramp_mm']} mm. 바퀴가 턱을 넘을 때 차체가 기우는 것까지 계산")
+
         contacts = [(w.x, w.y) for w in wheels]
         if args.cg:
             cg = np.array([float(v) for v in args.cg.split(",")])
@@ -432,6 +546,9 @@ def run(path: Path, args) -> dict:
 
     for r in rules["manual"]:
         add(r["rule"], r["item"], r["limit"], "-", None, "CAD 자동 판정 대상 아님")
+    if getattr(args, "plot", None):
+        cg_l = fr.to_local(np.array([[float(v) for v in args.cg.split(",")]]))[0] if args.cg else None
+        save_plot(args.plot, res, body if len(body) else allpts, wheels, ground, lim, cg_l)
     return res
 
 
@@ -447,7 +564,9 @@ def to_markdown(res: dict) -> str:
             names = sorted({' / '.join(s for s in n.split(' / ') if not re.fullmatch(r'NAUO\d+', s)) for n in w['names']})
             lines.append(f"| {i} | {w['x']:.0f} | {w['y']:.0f} | {w['d']:.0f} | {', '.join(names)[:80]} |")
         lines.append("")
-    lines += ["| 조항 | 항목 | 기준 | 측정값 | 판정 | 비고 |", "|---|---|---|---|---|---|"]
+    n = {k: sum(1 for c in res["checks"] if c["result"] == k) for k in ("PASS", "FAIL", "CHECK")}
+    lines += [f"**통과 {n['PASS']} · 불합격 {n['FAIL']} · 수동 확인 {n['CHECK']}**", "",
+              "| 조항 | 항목 | 기준 | 측정값 | 판정 | 비고 |", "|---|---|---|---|---|---|"]
     for c in res["checks"]:
         lines.append(f"| {c['rule']} | {c['item']} | {c['limit']} | {c['value']} | {mark[c['result']]} | {c['note']} |")
     return "\n".join(lines) + "\n"
@@ -465,6 +584,7 @@ def main(argv=None):
     ap.add_argument("--solar-name", help="regex for solar cell part names")
     ap.add_argument("--mesh-tol", type=float, default=2.0, help="mesh deflection in mm (default 2)")
     ap.add_argument("--sample", type=float, default=50.0, help="max spacing of clearance sample points in mm (default 50)")
+    ap.add_argument("--plot", type=Path, help="write a side/top view PNG here (needs matplotlib)")
     ap.add_argument("--out", type=Path, help="write markdown report here")
     ap.add_argument("--json", type=Path, help="write JSON result here")
     a = ap.parse_args(argv)
