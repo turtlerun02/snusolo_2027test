@@ -1,0 +1,23 @@
+{
+  "source": "2027 Bridgestone World Solar Challenge Event Regulations, Version 1.0 (7 May 2026)",
+  "limits": {
+    "length_mm": 5800,
+    "width_mm": 2300,
+    "height_mm": 1650,
+    "min_wheels": 3,
+    "overhang_ratio": 0.6,
+    "apex_grade": 15,
+    "approach_deg": 10,
+    "departure_deg": 10,
+    "solar_area_m2": 6.0,
+    "ssf": 1.0
+  },
+  "manual": [
+    {"rule": "2.3.5", "item": "과속방지턱 통과", "limit": "규정 도면 치수"},
+    {"rule": "2.11.4–2.11.5", "item": "탑승자 헬멧과 탑승 셀 볼록 껍질 사이 간격", "limit": "≥ 50 mm"},
+    {"rule": "2.12.4–2.12.12", "item": "PVC Pat 마네킹 착석 (발목 436 mm, 어깨-엉덩이-무릎 > 90° 등)", "limit": "규정 도면"},
+    {"rule": "2.12.13", "item": "헤드 스페이스 (835 mm 반경 팔, 앞 45° / 뒤 25° / 좌우 7°)", "limit": "ADR LK"},
+    {"rule": "2.17.1", "item": "후방 시야 (UNECE R46)", "limit": "규정 도면"},
+    {"rule": "2.23.8", "item": "측면 방향지시등 위치", "limit": "앞끝에서 1800 mm 이내, 바깥 끝에서 400 mm 이내"}
+  ]
+}

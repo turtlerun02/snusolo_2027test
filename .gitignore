@@ -1,0 +1,6 @@
+*.step
+*.stp
+!examples/sample_car.step
+__pycache__/
+report*.md
+report*.json
